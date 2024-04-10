@@ -2,6 +2,9 @@
 import base64
 import os
 import xml.etree.ElementTree as ET
+from datetime import datetime
+from time import sleep
+from zoneinfo import ZoneInfo
 
 import pandas as pd
 import requests
@@ -9,8 +12,6 @@ import zeep
 from dotenv import load_dotenv
 
 load_dotenv(".env.yaml")
-
-# todo: 今日の日付を取得
 
 
 # 楽天の認証情報の設定
@@ -53,6 +54,7 @@ def get_item_list() -> pd.DataFrame:
         )
         pre_cursor_mark = post_cursor_mark
         post_cursor_mark = response.json()["nextCursorMark"]
+    df_items = df_items.reset_index(drop=True)
     return df_items
 
 
@@ -63,31 +65,56 @@ def prefix_df(df: pd.DataFrame):
     Args:
         df (pd.DataFrame): 楽天ItemAPIで取得した商品一覧のDataFrame
     """
-    df = df[["item.manageNumber", "item.title", ""]]
+    df = df[["item.manageNumber", "item.title"]]
+    df.insert(0, "discount", "")
 
     # クーポン情報の取得
     coupon_endpoint = "https://api.rms.rakuten.co.jp/es/1.0/coupon/search"
-
-    for row in df_items.iterrows():
+    # 今日の日付
+    JST = ZoneInfo("Asia/Tokyo")
+    today = datetime.now(tz=JST)
+    for index, row in df_items.iterrows():
         coupon_endpoint = "https://api.rms.rakuten.co.jp/es/1.0/coupon/search"
         response = requests.get(
-            url=(coupon_endpoint + "?itemUrl=" + row[1]["item.manageNumber"]),
+            url=(coupon_endpoint + "?itemUrl=" + row["item.manageNumber"]),
             headers=headers,
         )
         root = ET.fromstring(response.content.decode("utf-8"))
         # クーポンの開始日時
+        start_date_list = []
         for value in root.iter("couponStartDate"):
-            print(value.text)
+            start_date_list.append(value.text)
+        start_date_list.pop(0)
         # クーポンの終了日時
+        end_date_list = []
         for value in root.iter("couponEndDate"):
-            print(value.text)
+            end_date_list.append(value.text)
+        end_date_list.pop(0)
         # クーポンの割引額
+        discount_list = []
         for value in root.iter("discountFactor"):
-            print(value.text)
-
+            discount_list.append(value.text)
+        # lists to dict to dataframe
+        data = {
+            "start_date": start_date_list,
+            "end_date": end_date_list,
+            "discount": discount_list,
+        }
+        coupon_df = pd.DataFrame(data)
         # 今日の日付を満たすクーポンがある？
-
+        coupon_df["start_date"] = pd.to_datetime(coupon_df["start_date"])
+        coupon_df["end_date"] = pd.to_datetime(coupon_df["end_date"])
+        # available_coupon_df = coupon_df[
+        #     (coupon_df["start_date"] < pd.to_datetime(today))
+        #     & (coupon_df["end_date"] > pd.to_datetime(today))
+        # ]
         # 複数ある場合は、割引額が最も大きいクーポンを選択
+        # available_coupon_df["discount"] = available_coupon_df["discount"].astype(
+        #     "int32"
+        # )
+        df.loc[index, "discount"] = coupon_df["discount"].max()
+        sleep(3)
+    return df
 
 
 # def upsert_items(df: pd.DataFrame):
@@ -103,4 +130,4 @@ def prefix_df(df: pd.DataFrame):
 #         )
 # %%
 df_items = get_item_list()
-# prefix_df(df_items)
+df = prefix_df(df_items)
