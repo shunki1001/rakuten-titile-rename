@@ -1,8 +1,9 @@
 # %%
 import base64
+import collections
 import os
 import xml.etree.ElementTree as ET
-from datetime import datetime
+from datetime import date, datetime
 from time import sleep
 from zoneinfo import ZoneInfo
 
@@ -15,7 +16,6 @@ load_dotenv(".env.yaml")
 
 
 # 楽天の認証情報の設定
-# 商品APIはREST APIだからheaderに。クーポン情報はSOAP APIだからbodyに。
 # todo: 5/7にライセンスキーの認証が切れる
 # https://cat-marketing.jp/2022/12/16/1471/
 b64 = os.environ["SERVICE_SECRETS"] + ":" + os.environ["LISCENSE_KEY"]
@@ -58,22 +58,49 @@ def get_item_list() -> pd.DataFrame:
     return df_items
 
 
-def prefix_df(df: pd.DataFrame):
+def prefix_df(df: pd.DataFrame) -> pd.DataFrame:
     """DataFrameの前処理。名前変更。
     メモリ節約のため、非破壊操作。
 
     Args:
         df (pd.DataFrame): 楽天ItemAPIで取得した商品一覧のDataFrame
     """
-    df = df[["item.manageNumber", "item.title"]]
-    df.insert(0, "discount", "")
+    # 価格情報と商品名、商品管理番号のみ抽出
+    df_1 = df[["item.manageNumber", "item.title"]]
+    df_2 = df.filter(like="standardPrice", axis="columns")
+    df_necessary = pd.concat([df_1, df_2], axis="columns").fillna("")
+    df_necessary["combined"] = df_necessary.iloc[:, 2:].apply(
+        lambda x: ",".join(x.astype(str)), axis=1
+    )
+    # 価格情報の取得
+    # SKUが複数ある商品においては、「○○円～！」。一つの時は「○○円！」
+    df_necessary.insert(0, "price", 0)
+    for index, row in df_necessary.iterrows():
+        s = row["combined"]
+        # ステップ1: カンマで分割してリストに変換
+        numbers_str_list = s.split(",")
+        # ステップ2: 空の要素を除去
+        numbers_str_list = [num for num in numbers_str_list if num]
+        # SKUのバリエーションによって、商品名が異なるため
+        # 重複しない要素の個数を判定して、格納
+        c = collections.Counter(numbers_str_list)
+        df_necessary.loc[index, "sku_number"] = len(c)
+        # ステップ3: 各要素を整数型に変換
+        numbers = [int(num) for num in numbers_str_list]
+        # ステップ4: min関数を使用して最小値を見つける
+        df_necessary.loc[index, "price"] = min(numbers)
+
+    df_necessary = df_necessary.loc[
+        :, ["item.manageNumber", "item.title", "price", "sku_number"]
+    ]
+    df_necessary.insert(0, "discount", "")
 
     # クーポン情報の取得
     coupon_endpoint = "https://api.rms.rakuten.co.jp/es/1.0/coupon/search"
     # 今日の日付
     JST = ZoneInfo("Asia/Tokyo")
     today = datetime.now(tz=JST)
-    for index, row in df_items.iterrows():
+    for index, row in df_necessary.iterrows():
         coupon_endpoint = "https://api.rms.rakuten.co.jp/es/1.0/coupon/search"
         response = requests.get(
             url=(coupon_endpoint + "?itemUrl=" + row["item.manageNumber"]),
@@ -90,6 +117,7 @@ def prefix_df(df: pd.DataFrame):
         for value in root.iter("couponEndDate"):
             end_date_list.append(value.text)
         end_date_list.pop(0)
+        # todo: クーポンタイプ（割引なのか、値引きなのか）も取得
         # クーポンの割引額
         discount_list = []
         for value in root.iter("discountFactor"):
@@ -104,17 +132,49 @@ def prefix_df(df: pd.DataFrame):
         # 今日の日付を満たすクーポンがある？
         coupon_df["start_date"] = pd.to_datetime(coupon_df["start_date"])
         coupon_df["end_date"] = pd.to_datetime(coupon_df["end_date"])
-        # available_coupon_df = coupon_df[
-        #     (coupon_df["start_date"] < pd.to_datetime(today))
-        #     & (coupon_df["end_date"] > pd.to_datetime(today))
-        # ]
+        available_coupon_df = coupon_df[
+            (coupon_df["start_date"] < pd.to_datetime(today))
+            & (coupon_df["end_date"] > pd.to_datetime(today))
+        ]
         # 複数ある場合は、割引額が最も大きいクーポンを選択
-        # available_coupon_df["discount"] = available_coupon_df["discount"].astype(
-        #     "int32"
-        # )
-        df.loc[index, "discount"] = coupon_df["discount"].max()
+        available_coupon_df.loc[:, "discount"] = available_coupon_df["discount"].astype(
+            "int32"
+        )
+        df_necessary.loc[index, "discount"] = available_coupon_df["discount"].max()
+
+        # 新しい商品名をカラムに追加していく
+        old_title = row["item.title"].split("】")[1]
+        # todo: discountのtypeによって場合分け
+        discount_price = (
+            row["price"] * (100 - df_necessary.loc[index, "discount"]) / 100
+        )
+        if row["sku_number"] > 1:
+            df_necessary.loc[index, "new_name"] = (
+                "【{}！最大{}％OFF！{:.0f}円～（値引き後）クーポン利用で】{}".format(
+                    today.strftime("%-m/%-d"),
+                    str(df_necessary.loc[index, "discount"]),
+                    discount_price,
+                    old_title,
+                )
+            )
+        elif row["sku_number"] == 1:
+            df_necessary.loc[index, "new_name"] = (
+                "【{}！最大{}％OFF！{:.0f}円（値引き後）クーポン利用で】{}".format(
+                    today.strftime("%-m/%-d"),
+                    str(df_necessary.loc[index, "discount"]),
+                    discount_price,
+                    old_title,
+                )
+            )
+        else:
+            df_necessary.loc[index, "new_name"] = "【{}！】{}".format(
+                today.strftime("%-m/%-d"),
+                old_title,
+            )
         sleep(3)
-    return df
+        print("{}商品目完了".format(index + 1))
+
+    return df_necessary
 
 
 # def upsert_items(df: pd.DataFrame):
@@ -130,4 +190,4 @@ def prefix_df(df: pd.DataFrame):
 #         )
 # %%
 df_items = get_item_list()
-df = prefix_df(df_items)
+df_items_necessary = prefix_df(df_items)
