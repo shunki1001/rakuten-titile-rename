@@ -147,7 +147,10 @@ def prefix_df(df: pd.DataFrame) -> pd.DataFrame:
         df_necessary.loc[index, "discount"] = available_coupon_df["discount"].max()
 
         # 新しい商品名をカラムに追加していく
-        old_title = row["item.title"].split("】")[1]
+        if len(row["item.title"].split("】")) > 1:
+            old_title = row["item.title"].split("】")[1]
+        else:
+            old_title = row["item.title"]
         # todo: discountのtypeによって場合分け
         discount_price = (
             row["price"] * (100 - df_necessary.loc[index, "discount"]) / 100
@@ -175,7 +178,7 @@ def prefix_df(df: pd.DataFrame) -> pd.DataFrame:
                 today.strftime("%-m/%-d"),
                 old_title,
             )
-        sleep(3)
+        sleep(1)
         print("{}商品目完了".format(index + 1))
 
     return df_necessary
