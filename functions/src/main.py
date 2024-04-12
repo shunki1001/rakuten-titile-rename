@@ -101,7 +101,6 @@ def prefix_df(df: pd.DataFrame) -> pd.DataFrame:
     JST = ZoneInfo("Asia/Tokyo")
     today = datetime.now(tz=JST)
     for index, row in df_necessary.iterrows():
-        coupon_endpoint = "https://api.rms.rakuten.co.jp/es/1.0/coupon/search"
         response = requests.get(
             url=(coupon_endpoint + "?itemUrl=" + row["item.manageNumber"]),
             headers=headers,
@@ -122,6 +121,11 @@ def prefix_df(df: pd.DataFrame) -> pd.DataFrame:
         discount_list = []
         for value in root.iter("discountFactor"):
             discount_list.append(value.text)
+        # クーポンがない時のエラー対応のため、適当な値を格納
+        if len(discount_list) == 0:
+            start_date_list.append("2024-01-01T00:00:00+09:00")
+            end_date_list.append("2024-01-01T00:00:00+09:00")
+            discount_list.append("0")
         # lists to dict to dataframe
         data = {
             "start_date": start_date_list,
