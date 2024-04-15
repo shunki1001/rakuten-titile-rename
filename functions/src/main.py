@@ -240,17 +240,22 @@ def prefix_df(df: pd.DataFrame) -> pd.DataFrame:
     return df_necessary
 
 
-# def upsert_items(df: pd.DataFrame):
+def upsert_items(df: pd.DataFrame):
+    upsert_endpoint = "https://api.rms.rakuten.co.jp/es/2.0/items/manage-numbers/"
+    for index, row in df.iterrows():
+        response = requests.patch(
+            url=upsert_endpoint + str(row["item.manageNumber"]),
+            headers=headers,
+            json={"title": row["new_name"]},
+        )
+        if response.status_code == 204:
+            print(f"{index + 1}商品目変更完了")
+        else:
+            print(response.json())
+            print(f"{index + 1}商品目変更エラー")
+            print(row)
 
-#     upsert_endpoint = "https://api.rms.rakuten.co.jp/es/2.0/items/manage-numbers/"
-#     for row in df.iterrows:
-#         response = ?requests?.patch(
-#             url=upsert_endpoint + row[1]['item.manageNumber'],
-#             headers=headers,
-#             data={
-#                 "title": row[1]['item.title']
-#             }
-#         )
+
 # %%
 df_items = get_item_list()
 df_items_necessary = prefix_df(df_items)
