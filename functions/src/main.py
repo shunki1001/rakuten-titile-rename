@@ -9,7 +9,6 @@ from zoneinfo import ZoneInfo
 
 import pandas as pd
 import requests
-import zeep
 from dotenv import load_dotenv
 
 load_dotenv(".env.yaml")
@@ -58,6 +57,12 @@ def get_item_list() -> pd.DataFrame:
     return df_items
 
 
+#########################
+# df_items = get_item_list()
+# df = df_items
+##########################
+
+
 def prefix_df(df: pd.DataFrame) -> pd.DataFrame:
     """DataFrameの前処理。名前変更。
     メモリ節約のため、非破壊操作。
@@ -93,7 +98,9 @@ def prefix_df(df: pd.DataFrame) -> pd.DataFrame:
     df_necessary = df_necessary.loc[
         :, ["item.manageNumber", "item.title", "price", "sku_number"]
     ]
-    df_necessary.insert(0, "discount", "")
+    ############################
+    # df_necessary = df_necessary.loc[:0, :]
+    ############################
 
     # クーポン情報の取得
     coupon_endpoint = "https://api.rms.rakuten.co.jp/es/1.0/coupon/search"
@@ -149,20 +156,44 @@ def prefix_df(df: pd.DataFrame) -> pd.DataFrame:
             (coupon_df["start_date"] < pd.to_datetime(today))
             & (coupon_df["end_date"] > pd.to_datetime(today))
         ]
-        # 複数ある場合は、割引額が最も大きいクーポンを選択
+        # 割引後の値段が最も大きいクーポンを選んでいく
         available_coupon_df.loc[:, "discount"] = available_coupon_df["discount"].astype(
             "int32"
         )
-        if len(available_coupon_df) > 1:
-            max_index = available_coupon_df["discount"].idxmax()
-            available_coupon_df = available_coupon_df.loc[max_index]
-            df_necessary.loc[index, "discount"] = available_coupon_df["discount"]
-            df_necessary.loc[index, "discount_type"] = available_coupon_df[
-                "coupon_type"
-            ]
-        else:
+        available_coupon_df = available_coupon_df.reset_index(drop=True)
+
+        # 該当するクーポンがないとき
+        if len(available_coupon_df) < 1:
             df_necessary.loc[index, "discount"] = 0
             df_necessary.loc[index, "discount_type"] = 0
+            df_necessary.loc[index, "discount_price"] = 0
+        else:
+            for tmp_index, tmp_row in available_coupon_df.iterrows():
+                if tmp_row["coupon_type"] == "1":
+                    available_coupon_df.loc[tmp_index, "discounted_price"] = (
+                        df_necessary.loc[index, "price"] - tmp_row["discount"]
+                    )
+                elif tmp_row["coupon_type"] == "2":
+                    available_coupon_df.loc[tmp_index, "discounted_price"] = (
+                        df_necessary.loc[index, "price"]
+                        * (100 - tmp_row["discount"])
+                        / 100
+                    )
+                else:
+                    available_coupon_df.loc[tmp_index, "discounted_price"] = (
+                        df_necessary.loc[tmp_index, "price"]
+                    )
+            # 割引後の価格が最も小さいクーポンを取得
+            min_index = available_coupon_df["discounted_price"].idxmin()
+            df_necessary.loc[index, "discount"] = available_coupon_df.loc[
+                min_index, "discount"
+            ]
+            df_necessary.loc[index, "discount_type"] = available_coupon_df.loc[
+                min_index, "coupon_type"
+            ]
+            df_necessary.loc[index, "discount_price"] = available_coupon_df.loc[
+                min_index, "discounted_price"
+            ]
         ### 適切なクーポン情報を取得完了 ###
 
         ### 商品名の変更を開始 ###
@@ -171,62 +202,86 @@ def prefix_df(df: pd.DataFrame) -> pd.DataFrame:
             old_title = row["item.title"].split("】")[1]
         else:
             old_title = row["item.title"]
+        # 型変換
+        discount_price = str(int(df_necessary.loc[index, "discount_price"]))
+        discount = df_necessary.loc[index, "discount"]
         ## 定額値引き
         if df_necessary.loc[index, "discount_type"] == "1":
-            discount_price = row["price"] - df_necessary.loc[index, "discount"]
             ## SKUの数によって場合分け
             if row["sku_number"] > 1:
                 df_necessary.loc[index, "new_name"] = (
-                    "【{}！最大{}円OFF！{:.0f}円～（値引き後）クーポン利用で】{}".format(
+                    "【{}！クーポンで{}円～】{}".format(
                         today.strftime("%-m/%-d"),
-                        str(df_necessary.loc[index, "discount"]),
                         discount_price,
                         old_title,
                     )
                 )
             elif row["sku_number"] == 1:
-                df_necessary.loc[index, "new_name"] = (
-                    "【{}！最大{}円OFF！{:.0f}円（値引き後）クーポン利用で】{}".format(
-                        today.strftime("%-m/%-d"),
-                        str(df_necessary.loc[index, "discount"]),
-                        discount_price,
-                        old_title,
-                    )
-                )
-            else:
-                df_necessary.loc[index, "new_name"] = "【{}！】{}".format(
+                df_necessary.loc[index, "new_name"] = "【{}！クーポンで{}円】{}".format(
                     today.strftime("%-m/%-d"),
+                    discount_price,
                     old_title,
                 )
         ## 定率値引き
+        # この時、割引率で場合わけ必要
         elif df_necessary.loc[index, "discount_type"] == "2":
-            discount_price = (
-                row["price"] * (100 - df_necessary.loc[index, "discount"]) / 100
-            )
-            ## SKUの数によって場合分け
-            if row["sku_number"] > 1:
-                df_necessary.loc[index, "new_name"] = (
-                    "【{}！最大{}％OFF！{:.0f}円～（値引き後）クーポン利用で】{}".format(
-                        today.strftime("%-m/%-d"),
-                        str(df_necessary.loc[index, "discount"]),
-                        discount_price,
-                        old_title,
+            if discount > 51:
+                ## SKUの数によって場合分け
+                if row["sku_number"] > 1:
+                    df_necessary.loc[index, "new_name"] = (
+                        "【{}！{}％OFF！{}円～】{}".format(
+                            today.strftime("%-m/%-d"),
+                            str(discount),
+                            discount_price,
+                            old_title,
+                        )
                     )
-                )
-            elif row["sku_number"] == 1:
-                df_necessary.loc[index, "new_name"] = (
-                    "【{}！最大{}％OFF！{:.0f}円（値引き後）クーポン利用で】{}".format(
-                        today.strftime("%-m/%-d"),
-                        str(df_necessary.loc[index, "discount"]),
-                        discount_price,
-                        old_title,
+                elif row["sku_number"] == 1:
+                    df_necessary.loc[index, "new_name"] = (
+                        "【{}！{}％OFF！{}円】{}".format(
+                            today.strftime("%-m/%-d"),
+                            str(discount),
+                            discount_price,
+                            old_title,
+                        )
                     )
-                )
+            elif discount == 50:
+                ## SKUの数によって場合分け
+                if row["sku_number"] > 1:
+                    df_necessary.loc[index, "new_name"] = (
+                        "【{}！半額クーポンで{}円～】{}".format(
+                            today.strftime("%-m/%-d"),
+                            discount_price,
+                            old_title,
+                        )
+                    )
+                elif row["sku_number"] == 1:
+                    df_necessary.loc[index, "new_name"] = (
+                        "【{}！半額クーポンで{}円】{}".format(
+                            today.strftime("%-m/%-d"),
+                            discount_price,
+                            old_title,
+                        )
+                    )
             else:
-                df_necessary.loc[index, "new_name"] = "【{}！】{}".format(
-                    today.strftime("%-m/%-d"),
-                    old_title,
-                )
+                if row["sku_number"] > 1:
+                    df_necessary.loc[index, "new_name"] = (
+                        "【{}！クーポン利用で{}円～】{}".format(
+                            today.strftime("%-m/%-d"),
+                            str(discount),
+                            discount_price,
+                            old_title,
+                        )
+                    )
+                elif row["sku_number"] == 1:
+                    df_necessary.loc[index, "new_name"] = (
+                        "【{}！クーポン利用で{}円】{}".format(
+                            today.strftime("%-m/%-d"),
+                            str(discount),
+                            discount_price,
+                            old_title,
+                        )
+                    )
         # その他
         else:
             df_necessary.loc[index, "new_name"] = "【{}！】{}".format(
