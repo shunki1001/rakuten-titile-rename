@@ -2,6 +2,7 @@
 import base64
 import collections
 import os
+import re
 import xml.etree.ElementTree as ET
 from datetime import date, datetime
 from time import sleep
@@ -34,7 +35,8 @@ def get_item_list() -> pd.DataFrame:
         pd.DataFrame: すべての商品のレスポンスデータを統合したDataFrame
     """
     serch_endpoint = (
-        "https://api.rms.rakuten.co.jp/es/2.0/items/search?hits=" + hits_limit
+        "https://api.rms.rakuten.co.jp/es/2.0/items/search?isHiddenItem=false&hits="
+        + hits_limit
     )
 
     first_serch_endpoint = serch_endpoint + "&cursorMark=*"
@@ -78,7 +80,6 @@ def prefix_df(df: pd.DataFrame) -> pd.DataFrame:
         lambda x: ",".join(x.astype(str)), axis=1
     )
     # 価格情報の取得
-    # SKUが複数ある商品においては、「○○円～！」。一つの時は「○○円！」
     df_necessary.insert(0, "price", 0)
     for index, row in df_necessary.iterrows():
         s = row["combined"]
@@ -98,7 +99,6 @@ def prefix_df(df: pd.DataFrame) -> pd.DataFrame:
     df_necessary = df_necessary.loc[
         :, ["item.manageNumber", "item.title", "price", "sku_number"]
     ]
-    print(df_necessary.dtypes)
     ############################
     # df_necessary = df_necessary.loc[:0, :]
     ############################
@@ -320,10 +320,7 @@ def prefix_df(df: pd.DataFrame) -> pd.DataFrame:
 
         ### 商品名の変更を開始 ###
         # 新しい商品名をカラムに追加していく
-        if len(row["item.title"].split("】")) > 1:
-            old_title = row["item.title"].split("】")[1]
-        else:
-            old_title = row["item.title"]
+        old_title = re.sub(r"^【[^】]*】", "", row["item.title"])
         # 型変換
         discount_price = str(int(df_necessary.loc[index, "discount_price"]))
         discount = df_necessary.loc[index, "discount"]
@@ -390,7 +387,6 @@ def prefix_df(df: pd.DataFrame) -> pd.DataFrame:
                     df_necessary.loc[index, "new_name"] = (
                         "【{}！クーポン利用で{}円～】{}".format(
                             today.strftime("%-m/%-d"),
-                            str(discount),
                             discount_price,
                             old_title,
                         )
@@ -399,7 +395,6 @@ def prefix_df(df: pd.DataFrame) -> pd.DataFrame:
                     df_necessary.loc[index, "new_name"] = (
                         "【{}！クーポン利用で{}円】{}".format(
                             today.strftime("%-m/%-d"),
-                            str(discount),
                             discount_price,
                             old_title,
                         )
@@ -411,8 +406,10 @@ def prefix_df(df: pd.DataFrame) -> pd.DataFrame:
                 old_title,
             )
         sleep(1)
-        print("{}商品目完了".format(index + 1))
-        print(df_necessary.loc[index, "new_name"])
+        # print("{}商品目完了".format(index + 1))
+        # print(df_necessary.loc[index, "new_name"])
+
+    print("====新しい商品名への変更完了====")
 
     return df_necessary
 
@@ -425,20 +422,22 @@ def upsert_items(df: pd.DataFrame):
             headers=headers,
             json={"title": row["new_name"]},
         )
+        sleep(1)
         if response.status_code == 204:
             print(f"{index + 1}商品目変更完了")
         else:
             print(response.json())
             print(f"{index + 1}商品目変更エラー")
-            print(row)
 
 
 def main(argas):
     df_items = get_item_list()
     df_items_necessary = prefix_df(df_items)
+    upsert_items(df_items_necessary)
     return "200"
 
 
-if "__name__" == "__main__":
-    df_items = get_item_list()
-    df_items_necessary = prefix_df(df_items)
+# %%
+# df_items = get_item_list()
+# df_items_necessary = prefix_df(df_items)
+# upsert_items(df_items_necessary)
