@@ -322,24 +322,18 @@ def prefix_df(df: pd.DataFrame) -> pd.DataFrame:
         # 新しい商品名をカラムに追加していく
         old_title = re.sub(r"^【[^】]*】", "", row["item.title"])
         # 型変換
-        discount_price = str(int(df_necessary.loc[index, "discount_price"]))
+        discount_price = int(df_necessary.loc[index, "discount_price"])
         discount = df_necessary.loc[index, "discount"]
         ## 定額値引き
         if df_necessary.loc[index, "discount_type"] == "1":
             ## SKUの数によって場合分け
             if row["sku_number"] > 1:
                 df_necessary.loc[index, "new_name"] = (
-                    "【{}！クーポンで{}円～】{}".format(
-                        today.strftime("%-m/%-d"),
-                        discount_price,
-                        old_title,
-                    )
+                    f"【{today.strftime('%-m/%-d')}！クーポンで{discount_price:,}円～】{old_title}"
                 )
             elif row["sku_number"] == 1:
-                df_necessary.loc[index, "new_name"] = "【{}！クーポンで{}円】{}".format(
-                    today.strftime("%-m/%-d"),
-                    discount_price,
-                    old_title,
+                df_necessary.loc[index, "new_name"] = (
+                    f"【{today.strftime('%-m/%-d')}！クーポンで{discount_price:,}円】{old_title}"
                 )
         ## 定率値引き
         # この時、割引率で場合わけ必要
@@ -348,56 +342,30 @@ def prefix_df(df: pd.DataFrame) -> pd.DataFrame:
                 ## SKUの数によって場合分け
                 if row["sku_number"] > 1:
                     df_necessary.loc[index, "new_name"] = (
-                        "【{}！{}％OFF！{}円～】{}".format(
-                            today.strftime("%-m/%-d"),
-                            str(discount),
-                            discount_price,
-                            old_title,
-                        )
+                        f"【{today.strftime('%-m/%-d')}！{str(discount)}％OFF！{discount_price:,}円～】{old_title}"
                     )
                 elif row["sku_number"] == 1:
                     df_necessary.loc[index, "new_name"] = (
-                        "【{}！{}％OFF！{}円】{}".format(
-                            today.strftime("%-m/%-d"),
-                            str(discount),
-                            discount_price,
-                            old_title,
-                        )
+                        f"【{today.strftime('%-m/%-d')}！{str(discount)}％OFF！{discount_price:,}円】{old_title}"
                     )
             elif discount == 50:
                 ## SKUの数によって場合分け
                 if row["sku_number"] > 1:
                     df_necessary.loc[index, "new_name"] = (
-                        "【{}！半額クーポンで{}円～】{}".format(
-                            today.strftime("%-m/%-d"),
-                            discount_price,
-                            old_title,
-                        )
+                        f"【{today.strftime('%-m/%-d')}！半額クーポンで{discount_price:,}円～】{old_title}"
                     )
                 elif row["sku_number"] == 1:
                     df_necessary.loc[index, "new_name"] = (
-                        "【{}！半額クーポンで{}円】{}".format(
-                            today.strftime("%-m/%-d"),
-                            discount_price,
-                            old_title,
-                        )
+                        f"【{today.strftime('%-m/%-d')}！半額クーポンで{discount_price:,}円】{old_title}"
                     )
             else:
                 if row["sku_number"] > 1:
                     df_necessary.loc[index, "new_name"] = (
-                        "【{}！クーポン利用で{}円～】{}".format(
-                            today.strftime("%-m/%-d"),
-                            discount_price,
-                            old_title,
-                        )
+                        f"【{today.strftime('%-m/%-d')}！クーポン利用で{discount_price:,}円～】{old_title}"
                     )
                 elif row["sku_number"] == 1:
                     df_necessary.loc[index, "new_name"] = (
-                        "【{}！クーポン利用で{}円】{}".format(
-                            today.strftime("%-m/%-d"),
-                            discount_price,
-                            old_title,
-                        )
+                        f"【{today.strftime('%-m/%-d')}！クーポン利用で{discount_price:,}円】{old_title}"
                     )
         # その他
         else:
