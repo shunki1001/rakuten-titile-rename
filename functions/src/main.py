@@ -399,9 +399,23 @@ def upsert_items(df: pd.DataFrame):
 
 
 def main(argas):
-    df_items = get_item_list()
-    df_items_necessary = prefix_df(df_items)
-    upsert_items(df_items_necessary)
+    try:
+        df_items = get_item_list()
+        df_items_necessary = prefix_df(df_items)
+        upsert_items(df_items_necessary)
+    except:
+        sleep(5)
+        print("1st Retry")
+        try:
+            df_items = get_item_list()
+            df_items_necessary = prefix_df(df_items)
+            upsert_items(df_items_necessary)
+        except:
+            sleep(10)
+            print("2nd Retry")
+            df_items = get_item_list()
+            df_items_necessary = prefix_df(df_items)
+            upsert_items(df_items_necessary)
     return "200"
 
 
