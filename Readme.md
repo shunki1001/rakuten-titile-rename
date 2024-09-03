@@ -6,3 +6,7 @@
 4. 商品名変更の patchAPI を呼び出す
 
 ## 商品名変更のロジック
+
+## デプロイコマンド
+
+gcloud functions deploy rakuten-scheduled-rename --gen2 --runtime=python311 --region=asia-northeast1 --source=. --entry-point=main --trigger-http --env-vars-file=.env.yaml
