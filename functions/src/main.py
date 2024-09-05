@@ -424,20 +424,20 @@ def main(argas):
     try:
         df_items = prefix_df(get_item_list())
         df_new_name_by_item = get_coupon_by_item(df_items, get_common_coupon())
-        # upsert_items(df_new_name_by_item)
+        upsert_items(df_new_name_by_item)
     except:
         sleep(5)
         print("1st Retry")
         try:
             df_items = prefix_df(get_item_list())
             df_new_name_by_item = get_coupon_by_item(df_items, get_common_coupon())
-            # upsert_items(df_new_name_by_item)
+            upsert_items(df_new_name_by_item)
         except:
             sleep(10)
             print("2nd Retry")
             df_items = prefix_df(get_item_list())
             df_new_name_by_item = get_coupon_by_item(df_items, get_common_coupon())
-            # upsert_items(df_new_name_by_item)
+            upsert_items(df_new_name_by_item)
     return "200"
 
 
