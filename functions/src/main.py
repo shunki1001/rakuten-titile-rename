@@ -16,7 +16,6 @@ load_dotenv(".env.yaml")
 
 
 # 楽天の認証情報の設定
-# todo: 5/7にライセンスキーの認証が切れる
 # https://cat-marketing.jp/2022/12/16/1471/
 b64 = os.environ["SERVICE_SECRETS"] + ":" + os.environ["LISCENSE_KEY"]
 b64_en = base64.b64encode(b64.encode())
@@ -59,12 +58,6 @@ def get_item_list() -> pd.DataFrame:
     return df_items
 
 
-#########################
-# df_items = get_item_list()
-# df = df_items
-##########################
-
-
 def prefix_df(df: pd.DataFrame) -> pd.DataFrame:
     """DataFrameの前処理。名前変更。
     メモリ節約のため、非破壊操作。
@@ -96,18 +89,15 @@ def prefix_df(df: pd.DataFrame) -> pd.DataFrame:
         # ステップ4: min関数を使用して最小値を見つける
         df_necessary.loc[index, "price"] = min(numbers)
 
-    df_necessary = df_necessary.loc[
+    return df_necessary.loc[
         :, ["item.manageNumber", "item.title", "price", "sku_number"]
     ]
     ############################
     # df_necessary = df_necessary.loc[:0, :]
     ############################
-    # 全クーポン情報を取得して、全品に適用できるクーポンを抽出
-    response_all_coupon = requests.get(
-        url=("https://api.rms.rakuten.co.jp/es/1.0/coupon/search"),
-        headers=headers,
-    )
-    root_all_item = ET.fromstring(response_all_coupon.content.decode("utf-8"))
+
+
+def extract_coupon_info(root_all_item: ET.Element) -> pd.DataFrame:
     # クーポンコード
     coupon_code_list = []
     for value in root_all_item.iter("couponCode"):
@@ -143,16 +133,87 @@ def prefix_df(df: pd.DataFrame) -> pd.DataFrame:
         "discount": discount_list,
         "coupon_type": coupont_type_list,
     }
-    coupon_df_all_item = pd.DataFrame(data_all_item)
+    return pd.DataFrame(data_all_item)
+
+
+def extract_coupon_condition(root_each_item: ET.Element) -> pd.DataFrame:
+    # クーポンの適用タイプ
+    condition_type = []
+    for value in root_each_item.iter("conditionTypeCode"):
+        condition_type.append(value.text)
+    # クーポンの適用条件
+    condition_value = []
+    for value in root_each_item.iter("startValue"):
+        condition_value.append(value.text)
+    data_each_item = {
+        "condition_type": condition_type,
+        "condition_value": condition_value,
+    }
+    return pd.DataFrame(data_each_item)
+
+
+def extract_coupon_by_item(root: ET.Element) -> pd.DataFrame:
+    # クーポンコード
+    coupon_code_list = []
+    for value in root.iter("couponCode"):
+        coupon_code_list.append(value.text)
+    coupon_code_list.pop(0)
+    # クーポンの開始日時
+    start_date_list = []
+    for value in root.iter("couponStartDate"):
+        start_date_list.append(value.text)
+    start_date_list.pop(0)
+    # クーポンの終了日時
+    end_date_list = []
+    for value in root.iter("couponEndDate"):
+        end_date_list.append(value.text)
+    end_date_list.pop(0)
+    # クーポンタイプ（割引なのか、値引きなのか）も取得
+    coupont_type_list = []
+    for value in root.iter("discountType"):
+        coupont_type_list.append(value.text)
+    # クーポンの割引額
+    discount_list = []
+    for value in root.iter("discountFactor"):
+        discount_list.append(value.text)
+    # クーポンがない時のエラー対応のため、適当な値を格納
+    if len(discount_list) == 0:
+        coupon_code_list.append("")
+        start_date_list.append("2024-01-01T00:00:00+09:00")
+        end_date_list.append("2024-01-01T00:00:00+09:00")
+        discount_list.append(0)
+        coupont_type_list.append(1)
+    # lists to dict to dataframe
+    data = {
+        "coupon_code": coupon_code_list,
+        "start_date": start_date_list,
+        "end_date": end_date_list,
+        "discount": discount_list,
+        "coupon_type": coupont_type_list,
+    }
+    return pd.DataFrame(data)
+
+
+def get_common_coupon() -> pd.DataFrame:
+    # 全クーポン情報を取得して、全品に適用できるクーポンを抽出
+    response_all_coupon = requests.get(
+        url=("https://api.rms.rakuten.co.jp/es/1.0/coupon/search?hits=100&page=1"),
+        headers=headers,
+    )
+    root_all_item = ET.fromstring(response_all_coupon.content.decode("utf-8"))
+    coupon_df_all_item = extract_coupon_info(root_all_item)
+
+    # すべての商品に適用可能なクーポンのみ抽出
     coupon_df_all_item = coupon_df_all_item[
         coupon_df_all_item["item_type"] == "4"
     ].reset_index(drop=True)
     coupon_df_all_item = coupon_df_all_item[
         coupon_df_all_item.columns[coupon_df_all_item.columns != "item_type"]
     ]
+
     # 各クーポンの適用条件を取得
     temp_coupon_df = pd.DataFrame()
-    for index, row in coupon_df_all_item.iterrows():
+    for _, row in coupon_df_all_item.iterrows():
         response_each_coupon = requests.get(
             url=(
                 "https://api.rms.rakuten.co.jp/es/1.0/coupon/get?couponCode="
@@ -161,19 +222,9 @@ def prefix_df(df: pd.DataFrame) -> pd.DataFrame:
             headers=headers,
         )
         root_each_item = ET.fromstring(response_each_coupon.content.decode("utf-8"))
-        # クーポンの適用タイプ
-        condition_type = []
-        for value in root_each_item.iter("conditionTypeCode"):
-            condition_type.append(value.text)
-        # クーポンの適用条件
-        condition_value = []
-        for value in root_each_item.iter("startValue"):
-            condition_value.append(value.text)
-        data_each_item = {
-            "condition_type": condition_type,
-            "condition_value": condition_value,
-        }
-        coupon_df_each_item = pd.DataFrame(data_each_item)
+        coupon_df_each_item = extract_coupon_condition(root_each_item)
+
+        # RS003： 利用金額　の条件があるクーポンのみを抽出
         coupon_df_each_item = coupon_df_each_item[
             coupon_df_each_item["condition_type"] == "RS003"
         ]
@@ -195,6 +246,12 @@ def prefix_df(df: pd.DataFrame) -> pd.DataFrame:
         .join(temp_coupon_df.set_index(keys="coupon_code"))
         .reset_index()
     )
+    return coupon_df_all_item
+
+
+def get_coupon_by_item(
+    df_necessary: pd.DataFrame, coupon_df_all_item: pd.DataFrame
+) -> pd.DataFrame:
     # 商品管理番号を指定してクーポン情報の取得
     coupon_endpoint = "https://api.rms.rakuten.co.jp/es/1.0/coupon/search"
     # 今日の日付
@@ -207,45 +264,8 @@ def prefix_df(df: pd.DataFrame) -> pd.DataFrame:
             headers=headers,
         )
         root = ET.fromstring(response.content.decode("utf-8"))
-        # クーポンコード
-        coupon_code_list = []
-        for value in root.iter("couponCode"):
-            coupon_code_list.append(value.text)
-        coupon_code_list.pop(0)
-        # クーポンの開始日時
-        start_date_list = []
-        for value in root.iter("couponStartDate"):
-            start_date_list.append(value.text)
-        start_date_list.pop(0)
-        # クーポンの終了日時
-        end_date_list = []
-        for value in root.iter("couponEndDate"):
-            end_date_list.append(value.text)
-        end_date_list.pop(0)
-        # クーポンタイプ（割引なのか、値引きなのか）も取得
-        coupont_type_list = []
-        for value in root.iter("discountType"):
-            coupont_type_list.append(value.text)
-        # クーポンの割引額
-        discount_list = []
-        for value in root.iter("discountFactor"):
-            discount_list.append(value.text)
-        # クーポンがない時のエラー対応のため、適当な値を格納
-        if len(discount_list) == 0:
-            coupon_code_list.append("")
-            start_date_list.append("2024-01-01T00:00:00+09:00")
-            end_date_list.append("2024-01-01T00:00:00+09:00")
-            discount_list.append(0)
-            coupont_type_list.append(1)
-        # lists to dict to dataframe
-        data = {
-            "coupon_code": coupon_code_list,
-            "start_date": start_date_list,
-            "end_date": end_date_list,
-            "discount": discount_list,
-            "coupon_type": coupont_type_list,
-        }
-        coupon_df = pd.DataFrame(data)
+        coupon_df = extract_coupon_by_item(root)
+
         # 全品に適用できるクーポン情報も結合
         coupon_df = pd.concat([coupon_df, coupon_df_all_item], axis="index")
         coupon_df.loc[:, "condition_value"] = (
@@ -275,16 +295,19 @@ def prefix_df(df: pd.DataFrame) -> pd.DataFrame:
         else:
             # それぞれのクーポンを適用すると、いくらになるのか
             for tmp_index, tmp_row in available_coupon_df.iterrows():
+                # 定額値引きのクーポン
                 if tmp_row["coupon_type"] == "1":
                     available_coupon_df.loc[tmp_index, "discounted_price"] = (
                         df_necessary.loc[index, "price"] - tmp_row["discount"]
                     )
+                # 定率値引きのクーポン
                 elif tmp_row["coupon_type"] == "2":
                     available_coupon_df.loc[tmp_index, "discounted_price"] = (
                         df_necessary.loc[index, "price"]
                         * (100 - tmp_row["discount"])
                         / 100
                     )
+                # 上記以外は割引なしの値段に
                 else:
                     available_coupon_df.loc[tmp_index, "discounted_price"] = (
                         df_necessary.loc[index, "price"]
@@ -294,6 +317,7 @@ def prefix_df(df: pd.DataFrame) -> pd.DataFrame:
                 by=["discounted_price"]
             )
             # クーポンの適用条件を満たしているチェック
+            # 実質価格が小さいものから適用条件をチェックして、breakするような処理
             is_available = False
             for i, r in ordereded_available_coupon_df.iterrows():
                 if r["condition_value"] <= df_necessary.loc[index, "price"]:
@@ -310,7 +334,7 @@ def prefix_df(df: pd.DataFrame) -> pd.DataFrame:
                     break
                 else:
                     print("クーポンの適用条件を満たさない！次のクーポンをチェック！")
-            # 最終的に条件を満たしているクーポンがあったかどうかの判定
+            # 最終的に条件を満たしているクーポンがあったかどうかの判定。適用クーポンがなければ、割引をすべて0で挿入
             if is_available == False:
                 df_necessary.loc[index, "discount"] = 0
                 df_necessary.loc[index, "discount_type"] = 0
@@ -319,13 +343,13 @@ def prefix_df(df: pd.DataFrame) -> pd.DataFrame:
         ### 適切なクーポン情報を取得完了 ###
 
         ### 商品名の変更を開始 ###
-        # 新しい商品名をカラムに追加していく
+        # 元の名前から【】を抽出
         old_title = re.sub(r"^【[^】]*】", "", row["item.title"])
         # 型変換
         old_price = int(df_necessary.loc[index, "price"])
         discount_price = int(df_necessary.loc[index, "discount_price"])
         discount = df_necessary.loc[index, "discount"]
-        ## 定額値引き
+        ## 定額値引きのクーポンが最大割引の場合の新しい商品名
         if df_necessary.loc[index, "discount_type"] == "1":
             ## SKUの数によって場合分け
             if row["sku_number"] > 1:
@@ -336,7 +360,7 @@ def prefix_df(df: pd.DataFrame) -> pd.DataFrame:
                 df_necessary.loc[index, "new_name"] = (
                     f"【クーポンで{old_price:,}円→{discount_price:,}円】{old_title}"
                 )
-        ## 定率値引き
+        ## 定率値引きのクーポンが最大割引の場合
         # この時、割引率で場合わけ必要
         elif df_necessary.loc[index, "discount_type"] == "2":
             if discount > 51:
@@ -398,22 +422,22 @@ def upsert_items(df: pd.DataFrame):
 
 def main(argas):
     try:
-        df_items = get_item_list()
-        df_items_necessary = prefix_df(df_items)
-        upsert_items(df_items_necessary)
+        df_items = prefix_df(get_item_list())
+        df_new_name_by_item = get_coupon_by_item(df_items, get_common_coupon())
+        # upsert_items(df_new_name_by_item)
     except:
         sleep(5)
         print("1st Retry")
         try:
-            df_items = get_item_list()
-            df_items_necessary = prefix_df(df_items)
-            upsert_items(df_items_necessary)
+            df_items = prefix_df(get_item_list())
+            df_new_name_by_item = get_coupon_by_item(df_items, get_common_coupon())
+            # upsert_items(df_new_name_by_item)
         except:
             sleep(10)
             print("2nd Retry")
-            df_items = get_item_list()
-            df_items_necessary = prefix_df(df_items)
-            upsert_items(df_items_necessary)
+            df_items = prefix_df(get_item_list())
+            df_new_name_by_item = get_coupon_by_item(df_items, get_common_coupon())
+            # upsert_items(df_new_name_by_item)
     return "200"
 
 
