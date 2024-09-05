@@ -367,11 +367,11 @@ def get_coupon_by_item(
                 ## SKUの数によって場合分け
                 if row["sku_number"] > 1:
                     df_necessary.loc[index, "new_name"] = (
-                        f"【クーポンで{old_price:,}円→{discount_price:,}円～】{old_title}"
+                        f"【半額クーポンで{old_price:,}円→{int(old_price*0.5):,}円～】{old_title}"
                     )
                 elif row["sku_number"] == 1:
                     df_necessary.loc[index, "new_name"] = (
-                        f"【クーポンで{old_price:,}円→{discount_price:,}円】{old_title}"
+                        f"【半額クーポンで{old_price:,}円→{int(old_price*0.5):,}円】{old_title}"
                     )
             elif discount == 50:
                 ## SKUの数によって場合分け
