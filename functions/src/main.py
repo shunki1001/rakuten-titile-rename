@@ -24,7 +24,7 @@ headers = {
     "Authorization": b"ESA " + b64_en,
     "Content-Type": "application/json; charset=utf-8",
 }
-hits_limit = "100"
+hits_limit = 100
 
 
 def get_item_list() -> pd.DataFrame:
@@ -33,10 +33,7 @@ def get_item_list() -> pd.DataFrame:
     Returns:
         pd.DataFrame: すべての商品のレスポンスデータを統合したDataFrame
     """
-    serch_endpoint = (
-        "https://api.rms.rakuten.co.jp/es/2.0/items/search?isHiddenItem=false&hits="
-        + hits_limit
-    )
+    serch_endpoint = f"https://api.rms.rakuten.co.jp/es/2.0/items/search?isHiddenItem=false&hits={hits_limit}"
 
     first_serch_endpoint = serch_endpoint + "&cursorMark=*"
     response = requests.get(url=first_serch_endpoint, headers=headers)
@@ -197,11 +194,43 @@ def extract_coupon_by_item(root: ET.Element) -> pd.DataFrame:
 def get_common_coupon() -> pd.DataFrame:
     # 全クーポン情報を取得して、全品に適用できるクーポンを抽出
     response_all_coupon = requests.get(
-        url=("https://api.rms.rakuten.co.jp/es/1.0/coupon/search?hits=100&page=1"),
+        url=(
+            f"https://api.rms.rakuten.co.jp/es/1.0/coupon/search?hits={hits_limit}&page=1"
+        ),
         headers=headers,
     )
     root_all_item = ET.fromstring(response_all_coupon.content.decode("utf-8"))
     coupon_df_all_item = extract_coupon_info(root_all_item)
+
+    # 合計クーポン数を結果から取得
+    for value in root_all_item.iter("allCount"):
+        count_coupons = int(value.text)
+    page_index = 2
+    # クーポンの合計数だけAPIを繰り返す
+    while page_index <= round(count_coupons / hits_limit, 0):
+        response_all_coupon = requests.get(
+            url=(
+                f"https://api.rms.rakuten.co.jp/es/1.0/coupon/search?hits={hits_limit}&page={page_index}"
+            ),
+            headers=headers,
+        )
+        root_all_item = ET.fromstring(response_all_coupon.content.decode("utf-8"))
+        coupon_df_all_item = pd.concat(
+            [coupon_df_all_item, extract_coupon_info(root_all_item)]
+        )
+
+        page_index += 1
+
+    # 今日適用できるクーポンのみ抽出
+    JST = ZoneInfo("Asia/Tokyo")
+    today = datetime.now(tz=JST)
+
+    coupon_df_all_item["start_date"] = pd.to_datetime(coupon_df_all_item["start_date"])
+    coupon_df_all_item["end_date"] = pd.to_datetime(coupon_df_all_item["end_date"])
+    coupon_df_all_item[
+        (coupon_df_all_item["start_date"] < pd.to_datetime(today))
+        & (coupon_df_all_item["end_date"] > pd.to_datetime(today))
+    ].reset_index(drop=True)
 
     # すべての商品に適用可能なクーポンのみ抽出
     coupon_df_all_item = coupon_df_all_item[
@@ -258,6 +287,22 @@ def get_coupon_by_item(
     JST = ZoneInfo("Asia/Tokyo")
     today = datetime.now(tz=JST)
     for index, row in df_necessary.iterrows():
+
+        # 【】があるかないかの判定＝クーポン情報を反映するかどうかの判定
+        def has_brackets(text):
+            # 正規表現パターンを定義
+            pattern = re.compile(r"【[^】]*】")
+            # パターンにマッチするかどうかをチェック
+            match = pattern.search(text)
+            return match is not None
+
+        old_title = ""
+        if has_brackets(row["item.title"]):
+            old_title = re.sub(r"^【[^】]*】", "", row["item.title"])
+        else:
+            df_necessary.loc[index, "new_name"] = row["item.title"]
+            continue
+
         ### クーポン情報の取得＋整理 ###
         response = requests.get(
             url=(coupon_endpoint + "?itemUrl=" + row["item.manageNumber"]),
@@ -343,8 +388,6 @@ def get_coupon_by_item(
         ### 適切なクーポン情報を取得完了 ###
 
         ### 商品名の変更を開始 ###
-        # 元の名前から【】を抽出
-        old_title = re.sub(r"^【[^】]*】", "", row["item.title"])
         # 型変換
         old_price = int(df_necessary.loc[index, "price"])
         discount_price = int(df_necessary.loc[index, "discount_price"])
@@ -352,11 +395,11 @@ def get_coupon_by_item(
         ## 定額値引きのクーポンが最大割引の場合の新しい商品名
         if df_necessary.loc[index, "discount_type"] == "1":
             ## SKUの数によって場合分け
-            if row["sku_number"] > 1:
+            if old_price / discount_price >= 2:
                 df_necessary.loc[index, "new_name"] = (
-                    f"【クーポンで{old_price:,}円→{discount_price:,}円】{old_title}"
+                    f"【半額クーポンで{old_price:,}円→{int(old_price*0.5):,}円】{old_title}"
                 )
-            elif row["sku_number"] == 1:
+            else:
                 df_necessary.loc[index, "new_name"] = (
                     f"【クーポンで{old_price:,}円→{discount_price:,}円】{old_title}"
                 )
@@ -395,7 +438,6 @@ def get_coupon_by_item(
         # その他
         else:
             df_necessary.loc[index, "new_name"] = "{}".format(old_title)
-        sleep(1)
         # print("{}商品目完了".format(index + 1))
         # print(df_necessary.loc[index, "new_name"])
 
