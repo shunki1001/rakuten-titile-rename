@@ -11,6 +11,7 @@ from zoneinfo import ZoneInfo
 import pandas as pd
 import requests
 from dotenv import load_dotenv
+from google.cloud import bigquery
 
 load_dotenv(".env.yaml")
 
@@ -466,8 +467,23 @@ def main(argas):
     try:
         df_items = prefix_df(get_item_list())
         df_new_name_by_item = get_coupon_by_item(df_items, get_common_coupon())
+        # デバッグ用
+        JST = ZoneInfo("Asia/Tokyo")
+        df_new_name_by_item["partition_date"] = date.today()
+        client = bigquery.Client(project="doctor-ilcsi")
+        job_config = bigquery.LoadJobConfig(
+            write_disposition="WRITE_APPEND",
+        )
+        df_new_name_by_item = df_new_name_by_item.astype("str")
+        df_new_name_by_item.columns = df_new_name_by_item.columns.str.replace(".", "_")
+        job = client.load_table_from_dataframe(
+            df_new_name_by_item,
+            "doctor-ilcsi.dl_rakuten_title_renmae.debug",
+            job_config=job_config,
+        )
         upsert_items(df_new_name_by_item)
-    except:
+    except Exception as e:
+        print(e)
         sleep(5)
         print("1st Retry")
         try:
