@@ -407,7 +407,7 @@ def get_coupon_by_item(
         ## 定率値引きのクーポンが最大割引の場合
         # この時、割引率で場合わけ必要
         elif df_necessary.loc[index, "discount_type"] == "2":
-            if discount > 51:
+            if discount > 50:
                 ## SKUの数によって場合分け
                 if row["sku_number"] > 1:
                     df_necessary.loc[index, "new_name"] = (
